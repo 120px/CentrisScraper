@@ -8,10 +8,9 @@ def main():
     start_timestamp = datetime.now().isoformat()
     start_time = time.time()
     with sync_playwright() as p:
-        browser = p.chromium.launch(executable_path="C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe", headless=False)
+        browser = p.chromium.launch(headless=False)
         page = browser.new_page()
 
-        # url = "https://www.centris.ca/en/properties~for-sale~griffintown-montreal-le-sud-ouest?uc=0"
         urls = ["https://www.centris.ca/en/properties~for-sale~griffintown-montreal-le-sud-ouest",
                 "https://www.centris.ca/en/properties~for-sale~old-montreal-montreal-ville-marie"]
 
@@ -22,6 +21,7 @@ def main():
             total_listings = int(show_total_listings(page))
             final_data = []
 
+            # 3 is for testing purposes. Replace with total_listings
             for i in range(3):
                 listing_data = extract_listing_data(page)
                 print(listing_data)
@@ -59,8 +59,6 @@ def write_to_json(data, start, end, expected_count, filename="scraped_listings.j
         json.dump(output, f, indent=4, ensure_ascii=False)
 
     print(f"\n📄 JSON data written to {filename}")
-
-
 
 def load_listing_page(page, url):
     page.goto(url, timeout=60000)
@@ -104,15 +102,9 @@ def show_total_listings(page):
 
 def navigate_to_next_listing(page):
     next_button = page.locator("#divWrapperPager > ul > li.next").first
-
     if next_button.is_visible():
-        # Get some known element on the page to wait for it to disappear
-        old_listing = page.locator(".property-thumbnail").first
-
         next_button.click(timeout=10000)
-
-        # Wait for previous listing to be detached from DOM
-        old_listing.wait_for(state="detached", timeout=10000)
+        human_delay(3, 9)
 
     else:
         print("Next button not visible. Possibly last page.")
@@ -128,16 +120,22 @@ def extract_listing_data(page):
         title = page.locator('#overview > div.row.property-tagline > div.d-none.d-sm-block.house-info > div > div.col.text-left.pl-0 > h1 > span').inner_text()
         price = safe_text(page, ".price-container > .price")
         address = page.locator("#overview > div.row.property-tagline > div.d-none.d-sm-block.house-info > div > div.col.text-left.pl-0 > div.d-flex.mt-1 > h2").inner_text()
-        description_div = page.locator('div[itemprop="description"]')
-        description_text = description_div.text_content()
-        print(description_text.strip())
+
 
         features_data = extract_listing_features(page)
         listing_data["url"] = page_url
         listing_data["title"] = title
         listing_data["address"] = address
         listing_data["price"] = price
-        listing_data["description"] = description_text
+
+        try:
+            description_div = page.locator('div[itemprop="description"]')
+            description_text = description_div.text_content(timeout=3000).strip()
+            listing_data["description"] = description_text
+        except:
+            print("No description found for this listing.")
+            listing_data["description"] = "N/A"
+
         listing_data["scrape_date"] = scrape_date
         listing_data.update(features_data)
 
