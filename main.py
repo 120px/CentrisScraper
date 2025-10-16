@@ -3,8 +3,11 @@ from datetime import date, datetime
 import time
 import json
 from playwright.sync_api import sync_playwright
+from database.database import Database
+
 
 def main():
+    db = Database()
     start_timestamp = datetime.now().isoformat()
     start_time = time.time()
     with sync_playwright() as p:
@@ -16,19 +19,15 @@ def main():
 
         for url in urls:
             area = url.split('~')[-1]
-            print(f"Scraping area: {area}")
             load_listing_page(page, url)
             total_listings = int(show_total_listings(page))
             final_data = []
 
             # 3 is for testing purposes. Replace with total_listings
-            for i in range(3):
+            for i in range(1):
                 listing_data = extract_listing_data(page)
-                print(listing_data)
                 final_data.append(listing_data)
                 navigate_to_next_listing(page)
-
-            print(final_data)
 
             end_timestamp = datetime.now().isoformat()
 
@@ -36,16 +35,23 @@ def main():
             # Get just the date part as a string
             date_str = dt.strftime("%Y-%m-%d")
 
-            write_to_json(final_data, start_timestamp, end_timestamp, total_listings, filename=f"scraped_listings_{date_str}_{area}.json")
+            for listing in final_data:
+                db.insert_listing(listing_data=listing, site=area)
+                print(listing)
+
+            # write_to_json(final_data, start_timestamp, end_timestamp, total_listings, filename=f"scraped_listings_{date_str}_{area}.json")
             print(f"\n✅ Finished in {time.time() - start_time:.2f} seconds.")
 
     browser.close()
 
+
 def setup():
     return time.time()
 
+
 def end(start_time):
     return time.time() - start_time
+
 
 def write_to_json(data, start, end, expected_count, filename="scraped_listings.json"):
     output = {
@@ -58,7 +64,8 @@ def write_to_json(data, start, end, expected_count, filename="scraped_listings.j
     with open(filename, "w", encoding="utf-8") as f:
         json.dump(output, f, indent=4, ensure_ascii=False)
 
-    print(f"\n📄 JSON data written to {filename}")
+    print(f"\n JSON data written to {filename}")
+
 
 def load_listing_page(page, url):
     page.goto(url, timeout=60000)
@@ -73,9 +80,11 @@ def load_listing_page(page, url):
     go_to_summary_view(page)
     sort_listings(page)
 
+
 def go_to_summary_view(page):
     button = page.wait_for_selector("#ButtonViewSummary")
     button.click()
+
 
 def sort_listings(page):
     try:
@@ -95,10 +104,12 @@ def sort_listings(page):
     except Exception as e:
         print(f"Failed to sort listings: {e}")
 
+
 def show_total_listings(page):
-    total_listings = page.locator("#nav-results > div > div.d-none.d-lg-block.col-lg-4.align-self-end > p > span.js-resultCount.font-weight-bold").inner_text()
-    print(total_listings)
+    total_listings = page.locator(
+        "#nav-results > div > div.d-none.d-lg-block.col-lg-4.align-self-end > p > span.js-resultCount.font-weight-bold").inner_text()
     return total_listings
+
 
 def navigate_to_next_listing(page):
     next_button = page.locator("#divWrapperPager > ul > li.next").first
@@ -109,6 +120,7 @@ def navigate_to_next_listing(page):
     else:
         print("Next button not visible. Possibly last page.")
 
+
 def extract_listing_data(page):
     listing_data = {}
     scrape_date = date.today().isoformat()
@@ -117,16 +129,18 @@ def extract_listing_data(page):
 
         page_url = page.url
 
-        title = page.locator('#overview > div.row.property-tagline > div.d-none.d-sm-block.house-info > div > div.col.text-left.pl-0 > h1 > span').inner_text()
+        title = page.locator(
+            '#overview > div.row.property-tagline > div.d-none.d-sm-block.house-info > div > div.col.text-left.pl-0 > h1 > span').inner_text()
         price = safe_text(page, ".price-container > .price")
-        address = page.locator("#overview > div.row.property-tagline > div.d-none.d-sm-block.house-info > div > div.col.text-left.pl-0 > div.d-flex.mt-1 > h2").inner_text()
-
+        address = page.locator(
+            "#overview > div.row.property-tagline > div.d-none.d-sm-block.house-info > div > div.col.text-left.pl-0 > div.d-flex.mt-1 > h2").inner_text()
 
         features_data = extract_listing_features(page)
         listing_data["url"] = page_url
         listing_data["title"] = title
         listing_data["address"] = address
         listing_data["price"] = price
+        listing_data["region"] = address.split(",")[-1].strip()
 
         try:
             description_div = page.locator('div[itemprop="description"]')
@@ -144,6 +158,7 @@ def extract_listing_data(page):
     except Exception as e:
         print(f"❌ Data extraction failed: {e}")
 
+
 def extract_listing_features(page):
     feature_teaser_container = page.locator("div.row.teaser")
     features_data = {}
@@ -159,14 +174,25 @@ def extract_listing_features(page):
         features_data["bedrooms"] = bedrooms
         features_data["bathrooms"] = bathrooms
 
-        print("🏠 Feature Info")
-        print(f"Rooms: {rooms}")
-        print(f"Bedrooms: {bedrooms}")
-        print(f"Bathrooms: {bathrooms}")
+        container = feature_teaser_container.nth(0)
+
+        # Access the sibling of the feature_teaser_container
+        sibling = container.locator("xpath=following-sibling::*[1]")
+        if sibling.count() > 0:
+            try:
+                features_data["listing_id"] = sibling.locator("#ListingId").text_content().strip()
+                features_data["prop_lat"] = sibling.locator("#PropertyLat").text_content().strip()
+                features_data["prop_long"] = sibling.locator("#PropertyLng").text_content().strip()
+            except Exception as e:
+                print(f"Error extracting additional features: {e}")
+                features_data["listing_id"] = "N/A"
+                features_data["prop_lat"] = "N/A"
+                features_data["prop_long"] = "N/A"
 
         return features_data
     else:
         print("No teaser section found.")
+
 
 def safe_text(node, selector, default="N/A"):
     try:
@@ -180,26 +206,6 @@ def human_delay(min_sec=2, max_sec=5):
     print(f"Sleeping for {delay:.2f} seconds...")
     time.sleep(delay)
 
-
-# def scrape_listing_overview(page):
-#     listings = page.locator("#divMainResult .property-thumbnail-item")
-#     count = listings.count()
-#     print(f"Found {count} listings.\n")
-#
-#     for i in range(count):
-#         listing = listings.nth(i)
-#         listing_data = open_listing_and_extract(page, listing)
-#         final_data.append(listing_data)
-#         return_to_listing_page(page)
-#
-# def open_listing_and_extract(page, listing):
-#     try:
-#         with page.expect_navigation(wait_until="load", timeout=15000):
-#             link = listing.locator("a.property-thumbnail-summary-link")
-#             link.click(timeout=5000)
-#         return extract_listing_data(page)
-#     except Exception as e:
-#         print(f"Failed to open listing: {e}")
 
 if __name__ == "__main__":
     main()
